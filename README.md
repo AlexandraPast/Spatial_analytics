@@ -3,4 +3,4 @@
 - author: Alexandra Pasternakova
 
 
-My assignments are available here: 
+My assignments are available here: https://github.com/Digital-Methods-HASS/AU580227_Pasternakova_Alexandra
