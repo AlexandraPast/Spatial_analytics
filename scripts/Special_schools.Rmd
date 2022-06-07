@@ -1,0 +1,677 @@
+---
+title: "SpecialSchools"
+author: "Alexandra Pasternakova"
+date: "5/1/2022"
+output:
+  html_document:
+    df_print: paged
+    toc: yes
+    toc_float: yes
+---
+
+```{r setup, include=TRUE, results="hide", echo=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+               cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+```
+
+```{r Load libraries}
+library(Rcpp)
+library(fasterize)
+library(raster)
+library(sf)
+library(dplyr)
+library(tidyverse)
+library(mapboxapi)
+library(leaflet)
+library(mapview)
+library(RColorBrewer)
+library(viridis)
+```
+
+```{r wd, include=FALSE, results="hide", echo=FALSE}
+# set working directory
+setwd("/Final_Project")
+```
+
+```{r mapbox-auth, include = FALSE, results="hide", echo=FALSE}
+# mapbox token
+# my_token <- ""
+# mb_access_token(my_token, install = TRUE)
+```
+
+## Load data
+```{r Load schools data}
+filename = "../data/w_data/schools_new_cl.csv"
+sch <- read_csv(file= filename, col_names = TRUE)
+
+```
+
+
+```{r mapbox-map}
+
+mapbox_map <- leaflet() %>%
+  addMapboxTiles(style_id = "streets-v11",
+                 username = "mapbox") 
+
+```
+
+# Map of all the schools
+```{r Plot schools}
+# check if our columns are correct type
+sapply(sch, class)
+
+# map with all the schools
+leaflet() %>% 
+  addTiles() %>% 
+  addCircleMarkers(sch$lng, sch$lat, popup = sch$label)
+
+```
+
+
+```{r Create sf object}
+# Convert to an sf object
+sch_sf <- st_as_sf(sch, coords = c("lng", "lat"), crs = 4326) %>% 
+        st_transform(crs = 25832)
+```
+
+
+# Walking to school 5km
+```{r Walking distance isochrones}
+# create isochrones for 3 selected distances
+walking_isos <- mb_isochrone(sch_sf,
+                             profile = "walking",
+                             distance = c(2000, 3000, 5000),
+                             id = "label")
+
+
+# save the isos object
+write_sf(walking_isos, "../data/w_data/walk_isos4326.shp")
+
+# set my colors
+colors1 <- viridisLite::viridis(3)
+
+# map of the walking isocgrones color-coded based on different distance
+map_walk <- mapbox_map  %>%
+  addPolygons(data =walking_isos,
+             popup = ~id,
+             color = rev(colors1),
+             fillColor = rev(colors1),
+             fillOpacity = 0.5,
+             opacity = 0.5,
+             weight = 0.2) %>%
+  addLegend(position = "topright",
+           labels =  c('2km', '3km', '5km'),
+           colors = colors1,
+           title = "Walking to school")
+# 
+map_walk # this map is great, however, the overlapping isochrones in some areas seem quite messy so I will create a raster for better visualization
+```
+
+
+```{r Create raster and plot again, warning=FALSE}
+# transform projection
+walking_isos_proj <- st_transform(walking_isos, 25832)
+
+# make raster with 100m resolution (it would be nicer with better res, however, my computer can't handle that)
+template <- raster(walking_isos_proj, resolution = 100)
+# assign minimum overlapping value from isochrones to each grid cell
+iso_surface <- fasterize(walking_isos_proj, template, field = "distance", fun = "min")
+
+# make a map
+map_walk2 <- mapbox_map %>% 
+  addRasterImage(iso_surface,
+                 colors = colors1,
+                 opacity = 0.5) %>%
+  addLegend(position = "topright",
+           labels =  c('2', '3', '5'),
+           colors = colors1,
+           title = "Walking reach (km)")
+
+map_walk2 # now we can see the areas accessible without the mess and we can also see the map underneath
+
+# save the raster layer
+writeRaster(iso_surface, '../data/raster_data/w_iso_surface100.tif', format = 'GTiff', overwrite = TRUE)
+
+```
+
+
+## Area outside of 5km walk - whole Denmark
+```{r Load Denmark data}
+# loading data for Denmark and transforming to same epsg
+DK <- getData("GADM", country = "DNK", level = 0)
+DK_tf <- st_transform(st_as_sf(DK), crs = 32618)
+DK_tf <- st_transform(DK_tf, 25832)
+st_crs(DK_tf)
+
+# check with a plot
+plot(st_geometry(DK_tf), col = "grey", border = "white")
+
+```
+
+
+```{r Calculating the area not covered, warning=FALSE}
+# some polygons are overlapping and we would get an error trying to do st_union, we can fix that by first projecting 
+# them into 2D coordinates
+walking_tf <- st_transform(walking_isos, 25832)
+
+# merging all the polygons
+walking_un_tf <- st_union(walking_tf)
+
+# calculating the areas not covered by walking polygons
+difference <- st_difference(DK_tf, walking_un_tf)
+# make sure our crs is the same and nothing weird happened
+st_crs(difference)
+
+# plot to make sure everything looks good
+plot(st_geometry(difference), col = "grey", border = "white")
+
+# st_area 
+st_area(DK_tf) #area of the whole Denmark
+st_area(difference) #area which can't reach a special school within 5km walk
+# same as above but divided so we can see km for easier comprehension
+st_area(difference)/1000000 # change to km^2
+st_area(difference)/st_area(DK_tf) # get percentage
+
+```
+
+40186518973 m^2 is 40186.52km^2
+The area of Denmark not able to reach a Special school in 5km walk is 40 186.523km^2 which is 93,19%.
+
+
+# Biking 5km
+```{r}
+biking_isos <- mb_isochrone(sch_sf,
+                             profile = "cycling",
+                             distance = c(2000, 3000, 5000),
+                             id = "label")
+
+
+# map of the walking isocgrones color-coded based on different distance
+map_bike <- mapbox_map  %>%
+  addPolygons(data =biking_isos,
+             popup = ~id,
+             color = rev(colors1),
+             fillColor = rev(colors1),
+             fillOpacity = 0.5,
+             opacity = 0.5,
+             weight = 0.2) %>%
+  addLegend(position = "topright",
+           labels =  c('2km', '3km', '5km'),
+           colors = colors1,
+           title = "Biking to school")
+#map 
+map_bike
+
+```
+
+
+```{r}
+# change to sf_object
+biking_tf <- st_transform(biking_isos, 25832)
+
+# merging all the polygons
+biking_un_tf <- st_union(biking_tf)
+
+# calculating the areas not covered by walking polygons
+difference <- st_difference(DK_tf, biking_un_tf)
+# make sure our crs is the same and nothing weird happened
+st_crs(difference)
+
+# plot to make sure everything looks good
+plot(st_geometry(difference), col = "grey", border = "white")
+
+# st_area 
+st_area(DK_tf) #area of the whole Denmark
+st_area(difference) #area which can't reach a special school within 5km walk
+# same as above but divided so we can see km for easier comprehension
+st_area(difference)/1000000 # change to km^2
+st_area(difference)/st_area(DK_tf) # get percentage
+
+```
+
+40483614510 m^2 is 40483.61km^2
+The area of Denmark not able to reach a Special school in 5km bike ride is 40 483.61km^2 which is 93.88%.Biking covers sligtly less area but the difference is very small. 
+
+
+# Driving to school 30 minutes
+```{r Driving time isochrones}
+# create isochrones of 20 minute rides 
+driving_isos <- mb_isochrone(
+  sch_sf,
+  profile = "driving",
+  time = c(20,30),
+  id = "label"
+)
+
+# save the object
+write_sf(driving_isos, "../data/w_data/drive_isos4326.shp")
+
+# set my color
+colors2 <- c("#C70039", "#FFC300")
+
+# map
+map_drive <- mapbox_map  %>%
+  addPolygons(data =driving_isos,
+             popup = ~id,
+             color = rev(colors2),
+             fillColor = rev(colors2),
+             fillOpacity = 0.5,
+             opacity = 0.5,
+             weight = 0.2) %>%
+  addLegend(position = "topright",
+           labels =  c("20","30"),
+           colors = colors2,
+           title = "Drive reach (minutes)")
+# 
+map_drive
+
+
+```
+
+```{r Create raster and plot driving}
+# transform projection
+driving_isos_proj <- st_transform(driving_isos, 25832)
+
+# make raster with 100m resolution
+template <- raster(driving_isos_proj, resolution = 100)
+# assign minimum overlapping value from isochrones to each grid cell
+iso_surface2 <- fasterize(driving_isos_proj, template, field = "time", fun = "min")
+
+map_drive2 <- mapbox_map %>% 
+  addRasterImage(iso_surface2,
+                 colors = colors2,
+                 opacity = 0.5) %>%
+  addLegend(position = "topright",
+           labels =  c("20","30"),
+           colors = colors2,
+           title = "Drive reach (minutes)")
+
+map_drive2 
+
+# save the raster layer
+writeRaster(iso_surface2, '../data/raster_data/d_iso_surface100.tif', format = 'GTiff', overwrite = TRUE)
+
+```
+
+## Area outside of 30 minute drive - whole Denmark
+```{r Calculate area for driving, warning=FALSE}
+# projection
+driving_tf <- st_transform(driving_isos, 25832)
+
+# merging all the polygons
+driving_un_tf <- st_union(driving_tf)
+
+# calculating the areas not covered by driving polygons
+difference2 <- st_difference(DK_tf, driving_un_tf)
+# make sure our crs is the same
+st_crs(difference2)
+
+# plot
+plot(st_geometry(difference2), col = "grey", border = "white")
+
+# st_area 
+st_area(DK_tf) #area of the whole Denmark
+st_area(difference2) #area which can't reach a special school in 30min ride
+st_area(difference2)/1000000 # change to km^2
+st_area(difference2)/st_area(DK_tf) # get percentage
+
+```
+
+6557964856 m^2 is 6 557.965km^2
+The area of Denmark not able to reach a Special school in 30 minute drive is 16 524,78 km^2 which is 15,21%.
+
+
+# Covering all of DK
+```{r Max isochrone coverage}
+# Driving range
+drivingMAX_isos <- mb_isochrone(
+  sch_sf,
+  profile = "driving",
+  time = 55,
+  id = "label"
+)
+
+# map
+map_driveMAX <- mapbox_map  %>%
+  addPolygons(data =drivingMAX_isos,
+             popup = ~id,
+             color = colors2[2],
+             fillColor = colors2[2],
+             fillOpacity = 1,
+             opacity = 0.3,
+             weight = 2,
+             highlight = highlightOptions(weight = 0.8,
+                                       color = "blue",
+                                       bringToFront = TRUE)) %>%
+  addLegend(position = "topright",
+           colors = colors2[2],
+           labels = "50",
+           title = "Drive reach (minutes)")
+
+# show map
+map_driveMAX
+
+# save data
+write_sf(drivingMAX_isos, "../data/w_data/driveMAX_isos4326.shp")
+```
+
+
+```{r Calculate area for MAX, warning=FALSE}
+# same calculations as above
+drivingMAX_tf <- st_transform(drivingMAX_isos, 25832)
+drivingMAX_un_tf <- st_union(drivingMAX_tf)
+difference3 <- st_difference(DK_tf, drivingMAX_un_tf)
+st_crs(difference3)
+# plot
+plot(st_geometry(difference3), col = "grey", border = "white")
+
+st_area(DK_tf) # area of the whole Denmark
+st_area(difference3) # area which can't reach a special school within 55min drive
+st_area(difference3)/1000000 # calculate km^2
+st_area(difference3)/st_area(DK_tf) # get percentage
+
+```
+
+The area of Denmark not able to reach a Special school in 55 minute drive is 1358.847 km^2 which is 3.15% I am assuming the 3.15% accounts for islands without special schools and road connection to mainland. Also beaches, parks, forests etc. with no roads.
+
+# Coverage by municipality
+```{r Load municipality shapefiles}
+# loading data for municipalities and transforming to same epsg
+mun <- getData("GADM", country = "DNK", level = 2)
+mun_tf <- st_transform(st_as_sf(mun), crs = 32618)
+mun_tf <- st_transform(mun_tf, 25832)
+st_crs(mun_tf)
+
+# check with a plot
+plot(st_geometry(mun_tf), col = "grey", border = "white")
+
+```
+
+
+## Walking - coverage calculation
+```{r Calculate areas for each municipality separately - walking, results='hide', warning=FALSE}
+# empty lists to save our values
+total <- list()
+ina_area <- list()
+ina_percent <- list()
+
+# loop over municipalities and calculate the same results as above, but for each munic
+for (x in 1:nrow(mun_tf)) {
+  print(x) # print current index to see progress
+  M <- mun_tf[x, ] # extract specific municipality
+  
+  diff <- st_difference(M, walking_un_tf) # calculate difference
+  
+  # I had to create a condition because some municipalities are fully covered and the polygon of difference doesnt 
+  # exist in that case (I illustrate the problem at the end of this markdown with visuals)
+  if (nrow(diff) == 0) {
+    a <- st_area(M)
+    b <- 0
+    c <- 0
+  } else {
+    a <- st_area(M) 
+    b <- st_area(diff) 
+    c <- st_area(diff)/st_area(M) 
+  }
+  # append results to our lists
+  total <- append(total, as.integer(a))
+  ina_area <- append(ina_area, as.integer(b))
+  ina_percent <- append(ina_percent, as.numeric(c))
+  
+}
+
+# multiply by 100 to get percentage
+ina_percent <- lapply(ina_percent,"*",100)
+
+# prepare my columns for new result df
+municipality <- mun_tf$NAME_2
+total_area <- unlist(total)
+out_reach <- unlist(ina_area)
+out_reach_perc <- unlist(ina_percent)
+
+# make df with results
+municipalities_res <- data.frame(municipality, total_area, out_reach, out_reach_perc)
+# round the percentages to two decimal points
+municipalities_res$out_reach_perc <- round(municipalities_res$out_reach_perc ,2)
+# save the file
+write_csv(municipalities_res, "../data/results/munic_walk.csv")
+
+```
+
+
+## Driving - coverage calculation
+```{r Calculate areas for each municipality separately - driving, results="hide", warning=FALSE}
+# This is the same code but applied to our driving data
+total <- list()
+ina_area <- list()
+ina_percent <- list()
+
+
+for (x in 1:nrow(mun_tf)) {
+  print(x)
+  M <- mun_tf[x, ]
+  
+  diff <- st_difference(M, driving_un_tf)
+  
+  if (nrow(diff) == 0) {
+    a <- st_area(M)
+    b <- 0
+    c <- 0
+  } else {
+    a <- st_area(M) 
+    b <- st_area(diff) 
+    c <- st_area(diff)/st_area(M) 
+  }
+  
+  total <- append(total, as.integer(a))
+  ina_area <- append(ina_area, as.integer(b))
+  ina_percent <- append(ina_percent, as.numeric(c))
+  
+}
+
+
+ina_percent <- lapply(ina_percent,"*",100)
+
+municipality <- mun_tf$NAME_2
+total_area <- unlist(total)
+out_reach <- unlist(ina_area)
+out_reach_perc <- unlist(ina_percent)
+
+
+municipalities_res2 <- data.frame(municipality, total_area, out_reach, out_reach_perc)
+municipalities_res2$out_reach_perc <- round(municipalities_res2$out_reach_perc ,2)
+write_csv(municipalities_res2, "../data/results/munic_drive.csv")
+
+```
+
+
+# How many special school students are in each municipality?
+```{r Municipalities and special students}
+# load data
+students <- read_csv(file="../data/w_data/student_count_cl.csv", col_names = TRUE)
+
+# rename so we can merge with municipality dataset
+colnames(students) <- c('NAME_2', 'special_st', 'total_st')
+
+# let's check if the municipality names are the same in both dataframes
+orig <- sort(setdiff(students$NAME_2, mun_tf$NAME_2)) # they are not but we know which now, so we can fix it
+new <- sort(setdiff(mun_tf$NAME_2, students$NAME_2))
+
+# made a for loop to fix the names so I don't have to write the same code many times
+for (x in 1:3) {
+  students$NAME_2[students$NAME_2 == orig[x]] <- new[x]
+  }
+
+# join the dataframes
+mun_tf_st = mun_tf %>% inner_join(students ,by="NAME_2")
+mun_tf_st
+
+# check crs
+st_crs(mun_tf_st)
+```
+
+```{r map Special students in municipalities}
+#max(na.omit(mun_tf_st$special_st))
+# set breakpoints for map
+breakpoints = seq(0, 2700, 300)
+
+# map
+mapview(mun_tf_st, 
+        zcol = "special_st",
+        col.regions = viridisLite::inferno,
+        at = breakpoints,
+        layer.name = "Special school students") +
+  mapview(sch_sf,
+          popup = sch_sf$label,
+          cex = 2,
+          color = "green",
+          color.fill = "green",
+          layer.name = "Special schools",
+          legend = TRUE)
+```
+We can see that some municipalities with higher numbers of students have only 1 or 2 schools, some 0.
+We could assume students travel further/longer in these areas.
+
+
+
+## Walking - map of coverage
+```{r Municipality area by walking reach}
+# load the results we stored
+w_access <- read_csv(file="../data/results/munic_walk.csv", col_names = TRUE)
+# rename columns so we can merge them with munic data
+access_walk <- w_access %>% rename(NAME_2 = municipality) %>% rename(out_reach_w = out_reach_per)
+# remove unneccessary columns so the program won't crash
+access_walk <- access_walk[ ,c(1,4)]
+# check if kommunes have the same names
+setdiff(access_walk$NAME_2, mun_tf$NAME_2)
+setdiff(mun_tf$NAME_2, access_walk$NAME_2) # seems alright
+# join dataframes
+mun_tf_merg = mun_tf_st %>% inner_join(access_walk ,by="NAME_2")
+mun_tf_merg
+
+# set breaks at every 10%
+at_lb = seq(0, 100, 10)
+pal <- magma(n = length(at_lb), direction = 1)
+# make a map
+mapview(mun_tf_merg, zcol = "out_reach_w",
+        col.regions = pal,
+        at = at_lb,
+        layer.name = "% is outside of 5km walking range")
+
+```
+
+## Driving - map of coverage
+```{r Municipality area by driving reach}
+# same process but with driving data
+# load data
+d_access <- read_csv(file="../data/results/munic_drive.csv", col_names = TRUE)
+# prepare for merging
+access_drive <- d_access %>% rename(NAME_2 = municipality) %>% rename(out_reach_d = out_reach_perc)
+access_drive <- access_drive[ ,c(1,4)]
+# check names
+setdiff(access_drive$NAME_2, mun_tf$NAME_2)
+setdiff(mun_tf$NAME_2, access_drive$NAME_2)
+# merge
+mun_tf_merg_full = mun_tf_merg %>% inner_join(access_drive ,by="NAME_2")
+mun_tf_merg_full
+
+# set breakpoints
+at_lb = seq(0, 100, 10)
+pal <- magma(n = length(at_lb), direction = 1)
+# map
+mapview(mun_tf_merg_full, zcol = "out_reach_d",
+        col.regions = pal,
+        at = at_lb,
+        layer.name = "% is outside of 30 min drive range")
+
+```
+
+# Students in areas with low accessibility 
+```{r Calculating how many students live in low accessibility areas}
+# filter all the rows with the percentage column higher or equal to 75
+lowest_w <- mun_tf_merg_full %>%
+  filter(out_reach_w >= 75)
+# add up all the values from the student count column and ignore NAs
+sum(na.omit(lowest_w$special_st))
+# 22327 students live in municipalities with 75% of area outside of range of 5km walk
+
+# same calculation but with 90%
+lowest_w2 <- mun_tf_merg_full %>%
+  filter(out_reach_w >= 90)
+
+sum(na.omit(lowest_w2$special_st))
+# 17044 students live in municipalities with 90% of area outside of range of 5km walk
+
+lowest_w3 <- mun_tf_merg_full %>%
+  filter(out_reach_w >= 100)
+
+sum(na.omit(lowest_w3$special_st))
+# 2643 students live in municipalities with 100% of area outside of range of 5km walk
+
+# driving - same calculation
+lowest_d <- mun_tf_merg_full %>%
+  filter(out_reach_d >= 50)
+
+sum(na.omit(lowest_d$special_st))
+# 663 students live in municipalities with 50% of area outside of range of 30 minute drive
+
+lowest_d2 <- mun_tf_merg_full %>%
+  filter(out_reach_d >= 75)
+
+sum(na.omit(lowest_d2$special_st))
+# 181 students live in municipalities with 75% of area outside of range of 30 minute drive
+
+```
+
+
+## Illustrative example
+- here I include a visualisation of some municipalities completely overlapped by our access polygons and why the difference polygon can't be made
+```{r, explanatory example, warning=FALSE}
+# let's check what is 10th kommune in our df
+mun_tf$NAME_2[10]
+# we extract only "Frederiksberg" so we can work with it
+M <- mun_tf[10,]
+# plot to check if it looks okay
+plot(st_geometry(M), col = "grey", border = "white") # it looks fine so let's continue
+
+# calculate the area of difference between our walking polygon and the kommune
+diff <- st_difference(M, walking_un_tf)
+# check it out
+diff # Hmm, it's empty! Why would that be? 
+
+# Well, perhaps the polygon representing the difference can't be made because the difference does not exist
+
+# Here I am plotting the two on one map to see if my assumption is correct
+  
+mapFrederiksberg <- mapbox_map  %>%
+  addPolygons(data =walking_isos,
+             popup = ~id,
+             color = colors2[2],
+             fillColor = colors2[2],
+             fillOpacity = 0.2, 
+             opacity = 0.3,
+             weight = 2, 
+             highlight = highlightOptions(weight = 1,
+                                       color = "blue",
+                                       bringToFront = TRUE)) %>%
+  addPolygons(data = mun[10,],
+              color = "red",
+              fillOpacity = 1
+              )
+mapFrederiksberg
+
+# indeed, if we zoom in on the red area, it' s completely covered by different polygons we created with walking 
+# distances
+
+```
