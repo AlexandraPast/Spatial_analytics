@@ -85,7 +85,6 @@ students <- students[ ,c(1,2)]
 students <- students %>% slice(-(1:5)) %>% slice(1:(n() - 1))
 # some numbers have commas in place of thousand which R would take as decimal point
 students$X2 <- as.numeric(gsub(",","",students$X2))
-students$X4 <- as.numeric(gsub(",","",students$X4))
 
 write_csv(students, "../w_data/student_count_cl.csv")
 ```
