@@ -9,6 +9,8 @@
    - Special_schools.Rmd - script including the analysis
 - **report**: contains the attached report to the project
 
+My assignments are available here: https://github.com/Digital-Methods-HASS/AU580227_Pasternakova_Alexandra
+
 Shield: [![CC BY-NC-SA 4.0][cc-by-nc-sa-shield]][cc-by-nc-sa]
 
 This work is licensed under a
@@ -20,4 +22,4 @@ This work is licensed under a
 [cc-by-nc-sa-image]: https://licensebuttons.net/l/by-nc-sa/4.0/88x31.png
 [cc-by-nc-sa-shield]: https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-lightgrey.svg
 
-My assignments are available here: https://github.com/Digital-Methods-HASS/AU580227_Pasternakova_Alexandra
+
