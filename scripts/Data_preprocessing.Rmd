@@ -1,0 +1,91 @@
+---
+title: "Data_processing_new"
+author: "Alexandra Pasternakova"
+date: "5/1/2022"
+output: html_document
+---
+```{r setup, include=TRUE, results="hide", echo=FALSE}
+library(knitr)
+library(rmdformats)
+
+## Global options
+options(max.print="75")
+opts_chunk$set(echo=TRUE,
+               cache=TRUE,
+               prompt=FALSE,
+               tidy=TRUE,
+               comment=NA,
+               message=FALSE,
+               warning=FALSE)
+opts_knit$set(width=75)
+``` 
+
+```{r libraries, include=TRUE, results="hide", echo=FALSE}
+library(mapboxapi)
+library(dplyr)
+library(tidyverse)
+```
+
+```{r wd, include=FALSE, results="hide", echo=FALSE}
+# set working directory
+setwd("")
+```
+
+# Provide your token
+```{r mapbox-auth, include = FALSE, results="hide", echo=FALSE}
+# mapbox token
+my_token <- ""
+mb_access_token(my_token, install = TRUE)
+```
+
+```{r Pre-processing schools data}
+# load csv
+schools <- read.csv(file="../data/schools_new.csv", header=TRUE, sep = ";", fileEncoding = "UTF16LE")
+#  column names
+colnames(schools)
+# extract the relevant columns
+schools_w <- schools[,c(3, 5, 6, 20, 22, 27, 28)]
+# change names to english
+colnames(schools_w) <- c('institution_name', 'street', 'post_number','municipality','region','lat','lng') 
+# remove kommune and region from municipality names and reagon names
+schools_w$municipality <- gsub("Kommune","", schools_w$municipality)
+schools_w$region <- gsub("Region","", schools_w$region)
+# create new column in format of school name + whole address
+schools_w <- schools_w %>%
+  unite("label", institution_name:municipality, sep= ", ", 
+        remove = FALSE) 
+# check for empty values in lat/lng
+indices <- which(schools_w$lat=="", arr.ind=TRUE)
+
+# fill in the blanks with mb_geocode (we could also use the opencage function 'oc_forward_df' but in this case we only have two missing sets of coordinates so it is not necessary)
+for (i in 1:length(indices)) {
+  print(i)
+  coords <- mb_geocode(schools_w[indices[i], 1])
+  schools_w$lng[schools_w$lng == ""] <- coords[1]
+  schools_w$lat[schools_w$lat == ""] <- coords[2]
+} 
+# check if we filled in the values 
+schools_w[indices[1], ]
+schools_w[indices[2], ]
+# substitute comma in lat/lng to dot instead
+schools_w$lat <- as.numeric(gsub(",",".", schools_w$lat))
+schools_w$lng <- as.numeric(gsub(",",".", schools_w$lng))
+# save the file
+write_csv(schools_w, "../w_data/schools_new_cl.csv")
+```
+
+
+```{r Pre-processing Children counts data}
+# load data
+students <- read_csv(file="../data/student_count.csv", col_names = FALSE)
+
+# extract columns with municipality and number of students attending special school
+students <- students[ ,c(1,2)]
+# get rid of rows with description etc
+students <- students %>% slice(-(1:5)) %>% slice(1:(n() - 1))
+# some numbers have commas in place of thousand which R would take as decimal point
+students$X2 <- as.numeric(gsub(",","",students$X2))
+students$X4 <- as.numeric(gsub(",","",students$X4))
+
+write_csv(students, "../w_data/student_count_cl.csv")
+```
