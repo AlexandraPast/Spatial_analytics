@@ -1,5 +1,5 @@
 # Spatial analytics
-- repository for final project from Special analytics
+- repository for final project from Spatial analytics
 - author: Alexandra Pasternakova
 
 
